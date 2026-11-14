@@ -3,6 +3,7 @@ import contextlib
 import io
 import json
 from pathlib import Path
+import shutil
 import tempfile
 import unittest
 from unittest import mock
@@ -51,10 +52,10 @@ class LabReleaseTest(unittest.TestCase):
             lab.verify(self.directory, self.manifest["tag"])
 
     def test_changed_manifest_cannot_be_published_under_old_approval(self):
-        release = {"draft": True, "prerelease": False, "target_commitish": "b" * 40}
+        release = {"isDraft": True, "isPrerelease": False, "targetCommitish": "b" * 40, "tagName": self.manifest["tag"]}
 
         def run(*args):
-            if args[:2] == ("gh", "api"):
+            if args[:3] == ("gh", "release", "view"):
                 return json.dumps(release)
             if args[:3] == ("gh", "release", "download"):
                 destination = Path(args[args.index("--dir") + 1])
@@ -64,6 +65,32 @@ class LabReleaseTest(unittest.TestCase):
 
         with mock.patch.object(lab, "run", side_effect=run), self.assertRaisesRegex(ValueError, "Draft changed"):
             lab.publish(self.manifest["tag"], "e" * 64)
+
+    def test_approved_draft_uses_draft_aware_lookup_and_promotes_existing_bytes(self):
+        edits = []
+        release = {"isDraft": True, "isPrerelease": False, "targetCommitish": "b" * 40, "tagName": self.manifest["tag"]}
+
+        def run(*args):
+            if args[:3] == ("gh", "release", "view"):
+                return json.dumps(release)
+            if args[:3] == ("gh", "release", "download"):
+                destination = Path(args[args.index("--dir") + 1])
+                for name in [lab.APK, lab.MANIFEST, "SHA256SUMS"]:
+                    shutil.copyfile(self.directory / name, destination / name)
+                return ""
+            if args[:3] == ("gh", "release", "edit"):
+                edits.append(args)
+                return ""
+            self.fail("Drafts must not be looked up through the published-tag REST endpoint")
+
+        digest = lab.sha256(self.directory / lab.MANIFEST)
+        with mock.patch.object(lab, "run", side_effect=run), \
+             mock.patch.object(lab, "inspect_apk", return_value="c" * 64), \
+             mock.patch.object(lab, "check_order"), contextlib.redirect_stdout(io.StringIO()):
+            lab.publish(self.manifest["tag"], digest)
+        self.assertEqual(len(edits), 1)
+        self.assertIn("--draft=false", edits[0])
+        self.assertIn("--latest", edits[0])
 
     def test_read_failure_is_never_treated_as_empty_release_history(self):
         failed = mock.Mock(returncode=1, stderr="HTTP 403: permission denied")

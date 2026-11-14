@@ -115,8 +115,11 @@ def publish(tag: str, expected_manifest_sha256: str) -> None:
         raise ValueError("Invalid Lab release tag")
     if not re.fullmatch(r"[0-9a-f]{64}", expected_manifest_sha256):
         raise ValueError("The reviewed manifest SHA-256 is required")
-    release = json.loads(run("gh", "api", f"repos/{REPO}/releases/tags/{tag}"))
-    if not release["draft"] or release["prerelease"]:
+    # Draft tags do not exist as git refs yet; the REST /releases/tags endpoint returns 404.
+    # gh release view resolves the owner's draft through the release listing instead.
+    release = json.loads(run("gh", "release", "view", tag, "--repo", REPO,
+                             "--json", "isDraft,isPrerelease,targetCommitish,tagName"))
+    if release["tagName"] != tag or not release["isDraft"] or release["isPrerelease"]:
         raise ValueError("Only a prepared Lab draft can be published")
     with tempfile.TemporaryDirectory() as temp:
         run("gh", "release", "download", tag, "--repo", REPO, "--dir", temp,
@@ -124,7 +127,7 @@ def publish(tag: str, expected_manifest_sha256: str) -> None:
         if sha256(Path(temp) / MANIFEST) != expected_manifest_sha256:
             raise ValueError("Draft changed since review; approve its exact manifest hash before publication")
         manifest = verify(Path(temp), tag)
-        if release["target_commitish"] != manifest["releaseRepositoryCommit"]:
+        if release["targetCommitish"] != manifest["releaseRepositoryCommit"]:
             raise ValueError("Draft target commit does not match the built APK manifest")
         check_order(manifest)
     # This is the sole step that advances /releases/latest/download for phones.
