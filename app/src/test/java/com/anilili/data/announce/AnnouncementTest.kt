@@ -2,6 +2,7 @@ package com.anilili.data.announce
 
 import com.anilili.data.update.NostrUpdateSource
 import com.anilili.data.update.toNostrEvent
+import com.anilili.data.update.signedUpdateEventJson
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
@@ -21,10 +22,10 @@ class AnnouncementTest {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
     /**
-     * The real 0.1.54 update manifest, live-signed, lifted from `NostrManifestVerificationTest`.
+     * The portable signed update fixture shared with `NostrManifestVerificationTest`.
      * Its signature is genuine — the only thing wrong with it here is its d-tag.
      */
-    private val liveUpdateEventJson = """{"content":"{\"version\":\"0.1.54\",\"changelog\":\"Grouped downloads by series, pinned caption appearance preview, robust stream resolution fallback for embeds & HLS, and cold-start recovery.\",\"apkUrl\":\"https://github.com/OWNER/Anilili/releases/latest/download/Anilili.apk\",\"sizeBytes\":15022786}","created_at":1785533738,"id":"5a06c71dc1b40ae21b0b32b9f958627c0f305b55c6b44fd639454b209e95933d","kind":30078,"pubkey":"f1abd1ac685aed1f5145271283cd9418bf13aa92ed26399df191ae0c08b22207","sig":"fe9c7200df30a27345f55c3f6485be84a565bbf4b9c68231c1eb378ec48fd77c9631513c144931b832d0dd75a54bc99b70ffb322adbb6dc24f8d7cfa1110b94e","tags":[["d","anilili-update"]]}"""
+    private val liveUpdateEventJson = signedUpdateEventJson
 
     /**
      * The d-tag is the whole separation between the two channels, since they share a key and a

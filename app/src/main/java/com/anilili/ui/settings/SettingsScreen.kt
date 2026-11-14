@@ -3134,6 +3134,7 @@ fun SettingsScreen(
                         onClick = { openPicker = SettingsPicker.MENU_LANGUAGE },
                     )
                 }
+                item(key = "Private update access") { LabUpdateAccess() }
                 item(key = "Check for updates on launch") {
                     MidnightSettingSwitchRow(
                         title = "Check for updates on launch",

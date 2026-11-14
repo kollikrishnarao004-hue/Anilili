@@ -21,8 +21,12 @@ import javax.crypto.spec.SecretKeySpec
  * [slotKey] names the SharedPreferences entry; the default is the original AniList slot, whose
  * key and AAD must never change or existing logins would be dropped on update.
  */
-internal class SecureTokenStore(context: Context, private val slotKey: String = KEY_TOKEN_ENCRYPTED) {
-    private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+internal class SecureTokenStore(
+    context: Context,
+    private val slotKey: String = KEY_TOKEN_ENCRYPTED,
+    preferencesName: String = PREFS_NAME,
+) {
+    private val prefs = context.getSharedPreferences(preferencesName, Context.MODE_PRIVATE)
     private val aad = slotKey.toByteArray(StandardCharsets.UTF_8)
 
     fun load(): String? {

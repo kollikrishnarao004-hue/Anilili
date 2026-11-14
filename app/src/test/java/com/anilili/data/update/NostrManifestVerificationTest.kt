@@ -8,33 +8,26 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Verifies the Nostr fallback against a real, live-signed manifest event.
- *
- * The event below was captured from wss://nos.lol on 2026-08-01 — the actual 0.1.54 release
- * manifest, with its real BIP-340 signature. It exercises the whole chain the app runs:
- * NIP-01 id re-serialization, the d-tag check, and the secp256k1 Schnorr verification.
- *
- * This is the test that would have caught the release being silently broken: R8 had shrunk the
- * secp256k1 JNI backend away, `Secp256k1.verifySchnorr` threw ExceptionInInitializerError, and
- * `runCatching { ... }.getOrDefault(false)` turned that into "signature invalid" — so every
- * release build rejected every manifest and the channel was inert.
+ * Runs NIP-01 serialization and BIP-340 verification against a portable signed fixture.
+ * The public source's old live fixture had its URL sanitized without re-signing it;
+ * SignedUpdateFixture retains the exact signed example.com payload already tested here.
  */
 class NostrManifestVerificationTest {
 
     private val json = Json { ignoreUnknownKeys = true }
-    private val liveEventJson = """{"content":"{\"version\":\"0.1.54\",\"changelog\":\"Grouped downloads by series, pinned caption appearance preview, robust stream resolution fallback for embeds & HLS, and cold-start recovery.\",\"apkUrl\":\"https://github.com/OWNER/Anilili/releases/latest/download/Anilili.apk\",\"sizeBytes\":15022786}","created_at":1785533738,"id":"5a06c71dc1b40ae21b0b32b9f958627c0f305b55c6b44fd639454b209e95933d","kind":30078,"pubkey":"f1abd1ac685aed1f5145271283cd9418bf13aa92ed26399df191ae0c08b22207","sig":"fe9c7200df30a27345f55c3f6485be84a565bbf4b9c68231c1eb378ec48fd77c9631513c144931b832d0dd75a54bc99b70ffb322adbb6dc24f8d7cfa1110b94e","tags":[["d","anilili-update"]]}"""
+    private val liveEventJson = signedUpdateEventJson
 
     private fun event() = json.parseToJsonElement(liveEventJson).jsonObject.toNostrEvent()
 
     @Test
-    fun `the published manifest event passes full NIP-01 verification`() {
+    fun `the signed fixture passes full NIP-01 verification`() {
         val event = event()
         assertEquals(NostrUpdateSource.MANIFEST_PUBKEY_HEX, event.pubkey)
         assertEquals(NostrUpdateSource.MANIFEST_KIND, event.kind)
         // Re-serializing the event exactly as NIP-01 specifies must reproduce its id.
         assertEquals(event.id, event.computeEventIdHex())
         // ...and the Schnorr signature must check out against the project key.
-        assertTrue("live manifest must verify", event.isValidManifest())
+        assertTrue("signed fixture must verify", event.isValidManifest())
     }
 
     @Test

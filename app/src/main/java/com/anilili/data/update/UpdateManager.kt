@@ -17,6 +17,7 @@ import com.anilili.errors.report
 import com.anilili.errors.toFailure
 import java.io.File
 import java.io.IOException
+import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -33,10 +34,8 @@ import okhttp3.Request
 import com.anilili.util.cached
 
 /**
- * In-app updates for a sideloaded install: reads the signed Nostr manifest (see
- * [NostrUpdateSource]), downloads the APK from its current primary host or mirrors,
- * and hands it to the system package installer. Android rejects the install unless
- * the new APK is signed with the same key, so a hijacked host can't replace the app.
+ * Private, approved Lab updates from our GitHub release repository. Downloaded APKs must
+ * match the manifest hash/build, this package, and its permanent signing certificate.
  */
 object UpdateManager {
     data class UpdateInfo(
@@ -64,6 +63,8 @@ object UpdateManager {
          * See [promptsUnasked].
          */
         val important: Boolean = false,
+        val sha256: String? = null,
+        val privateGitHubAsset: Boolean = false,
     ) {
         /** Every place this APK can be fetched from, preferred first, without duplicates. */
         val downloadUrls: List<String> get() = (listOf(apkUrl) + mirrors).distinct()
@@ -150,6 +151,7 @@ object UpdateManager {
      * interrupted.
      */
     fun autoCheckIfDue(context: Context, prompt: Boolean = true) {
+        if (LabUpdateCredentials.load(context) == null) return
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val lastCheckMs = prefs.getLong(KEY_LAST_CHECK, 0L)
         if (!updateCheckIsDue(System.currentTimeMillis(), lastCheckMs, CHECK_INTERVAL_MS)) {
@@ -184,7 +186,7 @@ object UpdateManager {
         _state.value = State.Checking
         val appContext = context.applicationContext
         scope.launch {
-            runCatching { fetchLatest() }
+            runCatching { fetchLatest(appContext) }
                 .onSuccess { info ->
                     appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                         .edit().putLong(KEY_LAST_CHECK, System.currentTimeMillis()).apply()
@@ -313,26 +315,12 @@ object UpdateManager {
         if (_state.value !is State.Downloading) _state.value = State.Idle
     }
 
-    /**
-     * Where the version is read from: the mirrored manifest, then the relays that back it up.
-     *
-     * Both carry the same signed event and both verify it, so the order is a latency choice and
-     * not a trust one — the mirror is one CDN request, while the relay scan waits on several
-     * sockets and routinely sits through timeouts.
-     *
-     * GitHub is no longer consulted. The release keeps its notes but carries no APK, so the call
-     * could only ever fail, and asking it first is what made every check pay for a doomed request.
-     */
-    private fun fetchLatest(): UpdateInfo =
-        runCatching { NostrUpdateSource.fetchManifestFromMirror(AppGraph.httpClient, json) }
-            .getOrElse { mirrorError ->
-                DiagnosticsLog.throwable("Manifest mirror failed; falling back to Nostr relays", mirrorError)
-                runCatching { NostrUpdateSource.fetchManifest(AppGraph.httpClient, json) }
-                    .getOrElse { nostrError ->
-                        DiagnosticsLog.throwable("Nostr relays also failed", nostrError)
-                        throw mirrorError
-                    }
-            }
+    /** The Lab channel only follows approved releases from our fork. */
+    private fun fetchLatest(context: Context): UpdateInfo =
+        LabReleaseSource.fetch(AppGraph.httpClient, json, BuildConfig.APPLICATION_ID,
+            requireNotNull(LabUpdateCredentials.load(context)) {
+                "Add your read-only GitHub token under Settings → App → Private update access"
+            })
 
     private fun downloadApk(context: Context, info: UpdateInfo): File {
         val policy = updateInstallerPolicy(Build.VERSION.SDK_INT)
@@ -366,15 +354,51 @@ object UpdateManager {
         var lastFailure: Exception? = null
         for ((index, url) in info.downloadUrls.withIndex()) {
             try {
-                downloadFrom(client, url, file, info)
+                downloadFrom(context, client, url, file, info)
+                verifyDownloadedApk(context, file, info)
                 if (index > 0) DiagnosticsLog.event("Update downloaded from mirror #$index")
                 return file
             } catch (e: Exception) {
                 lastFailure = e
+                file.delete()
                 DiagnosticsLog.throwable("Update download source ${index + 1}/${info.downloadUrls.size} failed", e)
             }
         }
         throw lastFailure ?: IOException("Download failed")
+    }
+
+    @Suppress("DEPRECATION")
+    private fun verifyDownloadedApk(context: Context, file: File, info: UpdateInfo) {
+        require(file.length() == info.sizeBytes) { "Update APK size does not match the release manifest" }
+        val expected = requireNotNull(info.sha256) { "Update APK checksum is missing" }
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                digest.update(buffer, 0, count)
+            }
+        }
+        require(digest.digest().toHexString().equals(expected, ignoreCase = true)) {
+            "Update APK checksum does not match the release manifest"
+        }
+        val pm = context.packageManager
+        val flags = android.content.pm.PackageManager.GET_SIGNATURES
+        val archive = requireNotNull(pm.getPackageArchiveInfo(file.absolutePath, flags)) {
+            "Update is not a valid Android package"
+        }
+        val installed = pm.getPackageInfo(context.packageName, flags)
+        require(archive.packageName == context.packageName) { "Update belongs to a different app" }
+        require(archive.versionCode == info.build && archive.versionCode > installed.versionCode &&
+            archive.versionName == info.version) {
+            "Update build number does not match the manifest or is not newer"
+        }
+        val candidateSigners = archive.signatures?.map { it.toCharsString() }?.toSet().orEmpty()
+        val installedSigners = installed.signatures?.map { it.toCharsString() }?.toSet().orEmpty()
+        require(candidateSigners.isNotEmpty() && candidateSigners == installedSigners) {
+            "Update was not signed with this app's signing key"
+        }
     }
 
     /**
@@ -431,8 +455,12 @@ object UpdateManager {
     }
 
     /** One attempt against one host. Throws so [downloadApk] can move to the next. */
-    private fun downloadFrom(client: OkHttpClient, url: String, file: File, info: UpdateInfo): File {
-        client.newCall(Request.Builder().url(url).build()).execute().use { response ->
+    private fun downloadFrom(context: Context, client: OkHttpClient, url: String, file: File, info: UpdateInfo): File {
+        val request = Request.Builder().url(url)
+        if (info.privateGitHubAsset) {
+            LabReleaseSource.authorizeAsset(request, requireNotNull(LabUpdateCredentials.load(context)))
+        }
+        client.newCall(request.build()).execute().use { response ->
             if (!response.isSuccessful) error("Download failed (HTTP ${response.code})")
             val responseBody = response.body ?: error("Download failed (empty response)")
             val total = responseBody.contentLength().takeIf { it > 0 } ?: info.sizeBytes

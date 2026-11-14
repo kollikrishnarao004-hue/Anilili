@@ -17,8 +17,11 @@ val diagnosticBuildSha = providers.environmentVariable("GITHUB_SHA").orNull
             isIgnoreExitValue = true
         }.standardOutput.asText.get().trim()
     }.getOrDefault("unknown").ifBlank { "unknown" }
-val appVersionCode = 96
-val appVersionName = "0.1.84"
+val labVersion = Properties().apply {
+    rootProject.file("version.properties").inputStream().use { load(it) }
+}
+val appVersionCode = labVersion.getProperty("versionCode").toInt()
+val appVersionName = labVersion.getProperty("versionName")
 val openSubtitlesApiKey = providers.gradleProperty("openSubtitlesApiKey").orNull
     ?: providers.environmentVariable("OPEN_SUBTITLES_API_KEY").orNull
     ?: ""
@@ -37,13 +40,14 @@ android {
     buildToolsVersion = "35.0.1"
 
     defaultConfig {
-        applicationId = "com.miruronative"
+        applicationId = "com.anilili.lab"
         // Fire OS 5 devices (including the 1st/2nd-gen Fire TV Sticks) report API 22.
         minSdk = 22
         targetSdk = 36
         versionCode = appVersionCode
         versionName = appVersionName
         buildConfigField("String", "GIT_SHA", "\"$diagnosticBuildSha\"")
+        buildConfigField("boolean", "ENABLE_UPSTREAM_SERVICES", "false")
         // Register a free API consumer at opensubtitles.com and provide its key through the
         // private Gradle user properties or OPEN_SUBTITLES_API_KEY. Never put it in this repo.
         buildConfigField("String", "OPEN_SUBTITLES_API_KEY", "\"$openSubtitlesApiKey\"")
@@ -56,12 +60,16 @@ android {
 
     signingConfigs {
         create("release") {
-            val storePath = keystoreProperties.getProperty("storeFile")
+            val storePath = providers.environmentVariable("LAB_KEYSTORE_PATH").orNull
+                ?: keystoreProperties.getProperty("storeFile")
             if (storePath != null) {
                 storeFile = rootProject.file(storePath)
-                storePassword = keystoreProperties.getProperty("storePassword")
-                keyAlias = keystoreProperties.getProperty("keyAlias")
-                keyPassword = keystoreProperties.getProperty("keyPassword")
+                storePassword = providers.environmentVariable("LAB_KEYSTORE_PASSWORD").orNull
+                    ?: keystoreProperties.getProperty("storePassword")
+                keyAlias = providers.environmentVariable("LAB_KEY_ALIAS").orNull
+                    ?: keystoreProperties.getProperty("keyAlias")
+                keyPassword = providers.environmentVariable("LAB_KEY_PASSWORD").orNull
+                    ?: keystoreProperties.getProperty("keyPassword")
             }
         }
     }
@@ -73,7 +81,7 @@ android {
             //
             // Debug builds carry the debug signing key and release builds the real one, and
             // Android will not replace an installed app with one signed by a different key. Were
-            // both to share com.miruronative, putting a test build on a device that already has
+            // both to share com.anilili.lab, putting a test build on a device that already has
             // the release would mean uninstalling it first — taking the LibraryStore history,
             // watchlist, downloads and saved tokens with it.
             //
@@ -222,7 +230,8 @@ val parityCorpus: File? = generateSequence(rootProject.projectDir.parentFile) { 
     .firstOrNull { it.isDirectory }
 val syncParityCorpus = tasks.register<Sync>("syncParityCorpus") {
     description = "Refreshes src/test/resources/parity from ../anilili-desktop/fixtures/parity."
-    onlyIf("the desktop checkout is next to this one") { parityCorpus != null }
+    // Resolve during configuration; an execution-time closure captures the Gradle script.
+    enabled = parityCorpus != null
     parityCorpus?.let { from(it) }
     into(layout.projectDirectory.dir("src/test/resources/parity"))
 }

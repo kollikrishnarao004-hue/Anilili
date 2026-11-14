@@ -102,6 +102,7 @@ object AnnouncementManager {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
     fun init(context: Context) {
+        if (!BuildConfig.ENABLE_UPSTREAM_SERVICES) return
         val app = context.applicationContext
         (app as? Application)?.registerActivityLifecycleCallbacks(ForegroundCheck)
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
@@ -133,6 +134,7 @@ object AnnouncementManager {
         checkLock.withLock { checkLocked(context, force) }
 
     private suspend fun checkLocked(context: Context, force: Boolean): Boolean {
+        if (!BuildConfig.ENABLE_UPSTREAM_SERVICES) return true
         val app = context.applicationContext
         if (!SettingsStore.announcements.value) return true
         val prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -296,6 +298,7 @@ object AnnouncementScheduler {
     private val network = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
 
     fun schedule(context: Context) {
+        if (!BuildConfig.ENABLE_UPSTREAM_SERVICES) return
         WorkManager.getInstance(context.applicationContext).enqueueUniquePeriodicWork(
             PERIODIC_NAME,
             ExistingPeriodicWorkPolicy.UPDATE,
@@ -309,6 +312,7 @@ object AnnouncementScheduler {
 
     /** One check as soon as the network allows. Cheap to call: [AnnouncementManager] throttles. */
     fun checkNow(context: Context) {
+        if (!BuildConfig.ENABLE_UPSTREAM_SERVICES) return
         // KEEP rather than REPLACE: a trigger that lands while the previous check is still in
         // flight should let it finish, not restart it from the top.
         WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(

@@ -87,7 +87,7 @@ object UsagePing {
      * `benchmarkRelease` and `nonMinifiedRelease`, which aren't debuggable and run on the
      * developer's emulators and phones during profiling.
      */
-    private val counted = BuildConfig.BUILD_TYPE == "release"
+    private val counted = BuildConfig.ENABLE_UPSTREAM_SERVICES && BuildConfig.BUILD_TYPE == "release"
 
     private val lenientJson = Json { ignoreUnknownKeys = true }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -104,6 +104,7 @@ object UsagePing {
      * moments start and stop the minutes, and [PlaybackStatus] the minutes watched.
      */
     fun init(context: Context) {
+        if (!counted) return
         val app = context.applicationContext
         prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         ProcessLifecycleOwner.get().lifecycle.addObserver(

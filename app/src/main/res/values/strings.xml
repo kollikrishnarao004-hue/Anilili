@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Anilili</string>
+    <string name="app_name">Anilili Lab</string>
     <string name="download_notification_channel_name">Episode downloads</string>
     <string name="download_notification_channel_description">Progress for episodes saved for offline viewing</string>
     <plurals name="download_batch_completed">

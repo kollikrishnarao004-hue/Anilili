@@ -1,3 +1,5 @@
+> **This fork builds Anilili Lab.** Signed APKs and updates are private. See [the Lab release guide](docs/LAB-RELEASES.md) for installation, private update access, and the approval workflow.
+
 <p align="center">
   <img src="docs/assets/icon.png" width="104" alt="Anilili app icon" />
 </p>
